@@ -1,0 +1,577 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>EV Telemetry — Vehicle Dashboard</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg: #0a0d12;
+    --bg-grid: #0d1119;
+    --panel: #12171f;
+    --panel-2: #161c26;
+    --border: #212a37;
+    --border-soft: #1a212c;
+    --text: #e7edf3;
+    --text-dim: #7c8899;
+    --text-faint: #4a5566;
+
+    --accent: #37e6c4;       /* primary — speed / motion */
+    --accent-dim: #1c7a68;
+    --energy: #ffc857;       /* secondary — energy / battery */
+    --info: #5b8def;
+    --warn: #ffc857;
+    --crit: #ff5568;
+
+    --cool: #4fc3f7;
+    --mid: #ffc857;
+    --hot: #ff5568;
+
+    --mono: 'Space Mono', 'SFMono-Regular', monospace;
+    --sans: 'Inter', system-ui, sans-serif;
+  }
+
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;}
+
+  body{
+    background:
+      radial-gradient(ellipse 1200px 600px at 15% -10%, rgba(55,230,196,0.06), transparent 60%),
+      radial-gradient(ellipse 900px 500px at 100% 0%, rgba(255,200,87,0.05), transparent 55%),
+      var(--bg);
+    background-attachment: fixed;
+    color: var(--text);
+    font-family: var(--sans);
+    min-height:100vh;
+    padding: 18px;
+  }
+
+  /* subtle PCB trace texture on the page background */
+  body::before{
+    content:"";
+    position:fixed; inset:0;
+    pointer-events:none;
+    opacity:0.035;
+    background-image:
+      linear-gradient(var(--accent) 1px, transparent 1px),
+      linear-gradient(90deg, var(--accent) 1px, transparent 1px);
+    background-size: 42px 42px;
+    z-index:0;
+  }
+
+  .wrap{ position:relative; z-index:1; max-width:1320px; margin:0 auto; }
+
+  /* ---------- Header ---------- */
+  header{
+    display:flex; align-items:center; justify-content:space-between;
+    flex-wrap:wrap; gap:12px;
+    padding: 6px 4px 20px 4px;
+  }
+  .brand{ display:flex; align-items:center; gap:12px; }
+  .brand-mark{
+    width:38px; height:38px; border-radius:9px;
+    background: linear-gradient(135deg, var(--accent), var(--accent-dim));
+    display:flex; align-items:center; justify-content:center;
+    font-family:var(--mono); font-weight:700; color:#04211c; font-size:15px;
+    box-shadow: 0 0 22px rgba(55,230,196,0.35);
+  }
+  .brand h1{
+    font-size:16px; letter-spacing:0.12em; margin:0; font-weight:800;
+    text-transform:uppercase; color:var(--text);
+  }
+  .brand span.sub{
+    display:block; font-size:11px; color:var(--text-dim); letter-spacing:0.08em;
+    font-weight:500; margin-top:2px; text-transform:none;
+  }
+  .status-cluster{ display:flex; align-items:center; gap:18px; }
+  .status-pill{
+    display:flex; align-items:center; gap:8px;
+    background:var(--panel); border:1px solid var(--border);
+    padding:7px 13px; border-radius:100px;
+    font-family:var(--mono); font-size:12px; color:var(--text-dim);
+  }
+  .dot{ width:8px; height:8px; border-radius:50%; background:var(--accent);
+    box-shadow:0 0 8px var(--accent); animation:pulse 2s ease-in-out infinite; }
+  @keyframes pulse{ 0%,100%{opacity:1;} 50%{opacity:0.35;} }
+  .clock{ font-family:var(--mono); font-size:13px; color:var(--text); letter-spacing:0.03em; }
+
+  /* ---------- Grid ---------- */
+  .dash{
+    display:grid;
+    grid-template-columns: 1.4fr 1fr 1fr 1fr;
+    grid-template-areas:
+      "speed speed battery alerts"
+      "speed speed range   alerts"
+      "rpm   mtemp mtemp   alerts"
+      "modules modules modules modules"
+      "energy energy energy energy";
+    gap:14px;
+  }
+  @media (max-width:980px){
+    .dash{
+      grid-template-columns: 1fr 1fr;
+      grid-template-areas:
+        "speed speed"
+        "battery range"
+        "rpm mtemp"
+        "modules modules"
+        "energy energy"
+        "alerts alerts";
+    }
+  }
+  @media (max-width:620px){
+    .dash{
+      grid-template-columns: 1fr;
+      grid-template-areas:
+        "speed" "battery" "range" "rpm" "mtemp" "modules" "energy" "alerts";
+    }
+  }
+
+  .panel{
+    background: linear-gradient(180deg, var(--panel), var(--panel-2));
+    border:1px solid var(--border);
+    border-radius:14px;
+    padding:16px 18px;
+    position:relative;
+    overflow:hidden;
+  }
+  .panel-label{
+    font-size:10.5px; letter-spacing:0.14em; text-transform:uppercase;
+    color:var(--text-dim); font-weight:700; margin:0 0 4px 0;
+    display:flex; align-items:center; justify-content:space-between;
+  }
+  .panel-label .unit{ color:var(--text-faint); font-weight:500; letter-spacing:0.04em; }
+
+  /* ---------- Speed (hero) ---------- */
+  .speed-panel{ grid-area:speed; display:flex; flex-direction:column; align-items:center; justify-content:center; min-height:280px; }
+  .gauge-svg{ width:100%; max-width:300px; height:auto; overflow:visible; }
+  .gauge-track{ fill:none; stroke:var(--border-soft); stroke-width:14; stroke-linecap:round; }
+  .gauge-fill{ fill:none; stroke:var(--accent); stroke-width:14; stroke-linecap:round;
+    filter: drop-shadow(0 0 6px rgba(55,230,196,0.55));
+    transition: stroke-dashoffset 0.15s linear; }
+  .gauge-tick{ stroke:var(--text-faint); stroke-width:2; }
+  .needle{ stroke:var(--text); stroke-width:3; stroke-linecap:round; transform-origin: 150px 150px; transition: transform 0.15s linear; }
+  .needle-hub{ fill:var(--text); }
+  .speed-readout{ text-align:center; margin-top:-38px; }
+  .speed-value{ font-family:var(--mono); font-size:52px; font-weight:700; line-height:1; color:var(--text); font-variant-numeric:tabular-nums; }
+  .speed-unit{ font-size:12px; color:var(--text-dim); letter-spacing:0.14em; text-transform:uppercase; margin-top:4px; }
+
+  /* ---------- Battery / Range ---------- */
+  .battery-panel{ grid-area:battery; display:flex; align-items:center; gap:14px; }
+  .range-panel{ grid-area:range; display:flex; flex-direction:column; justify-content:center; }
+  .ring-wrap{ position:relative; width:74px; height:74px; flex:none; }
+  .ring-wrap svg{ transform:rotate(-90deg); }
+  .ring-track{ fill:none; stroke:var(--border-soft); stroke-width:8; }
+  .ring-fill{ fill:none; stroke-width:8; stroke-linecap:round; transition: stroke-dashoffset 0.4s ease, stroke 0.4s ease; }
+  .ring-pct{ position:absolute; inset:0; display:flex; align-items:center; justify-content:center;
+    font-family:var(--mono); font-weight:700; font-size:16px; }
+  .battery-meta div:first-child{ font-family:var(--mono); font-size:11px; color:var(--text-dim); }
+  .range-value{ font-family:var(--mono); font-size:30px; font-weight:700; color:var(--text); font-variant-numeric:tabular-nums; }
+  .range-value span{ font-size:14px; color:var(--text-dim); font-weight:500; margin-left:4px; }
+
+  /* ---------- RPM / Motor temp ---------- */
+  .rpm-panel{ grid-area:rpm; }
+  .mtemp-panel{ grid-area:mtemp; }
+  .bigstat{ font-family:var(--mono); font-size:34px; font-weight:700; color:var(--text); margin:6px 0 10px 0; font-variant-numeric:tabular-nums; }
+  .bar-track{ height:10px; border-radius:6px; background:var(--border-soft); overflow:hidden; position:relative; }
+  .bar-fill{ height:100%; border-radius:6px; transition: width 0.25s ease, background 0.25s ease; }
+  .bar-ticks{ display:flex; justify-content:space-between; margin-top:6px; font-family:var(--mono); font-size:9.5px; color:var(--text-faint); }
+  .thermo-track{ height:10px; border-radius:6px; overflow:hidden;
+    background: linear-gradient(90deg, var(--cool), var(--mid) 55%, var(--hot)); position:relative; }
+  .thermo-marker{ position:absolute; top:-4px; width:2px; height:18px; background:var(--text); box-shadow:0 0 4px rgba(0,0,0,0.6); transition: left 0.25s ease; }
+
+  /* ---------- Alerts ---------- */
+  .alerts-panel{ grid-area:alerts; display:flex; flex-direction:column; min-height:280px; }
+  .alerts-list{ list-style:none; margin:8px 0 0 0; padding:0; overflow-y:auto; flex:1; display:flex; flex-direction:column; gap:8px; max-height:420px; }
+  .alerts-list::-webkit-scrollbar{ width:6px; }
+  .alerts-list::-webkit-scrollbar-thumb{ background:var(--border); border-radius:4px; }
+  .alert-item{ display:flex; gap:9px; padding:8px 9px; border-radius:8px; background:var(--bg-grid); border:1px solid var(--border-soft); animation: slideIn 0.35s ease; }
+  @keyframes slideIn{ from{ opacity:0; transform:translateY(-6px);} to{opacity:1; transform:translateY(0);} }
+  .alert-dot{ width:8px; height:8px; border-radius:50%; margin-top:4px; flex:none; }
+  .alert-body{ min-width:0; }
+  .alert-msg{ font-size:12.5px; color:var(--text); line-height:1.35; }
+  .alert-time{ font-family:var(--mono); font-size:10px; color:var(--text-faint); margin-top:2px; }
+  .sev-info .alert-dot{ background:var(--info); box-shadow:0 0 6px var(--info); }
+  .sev-warning .alert-dot{ background:var(--warn); box-shadow:0 0 6px var(--warn); }
+  .sev-critical .alert-dot{ background:var(--crit); box-shadow:0 0 6px var(--crit); }
+  .sev-critical{ border-color:rgba(255,85,104,0.35); }
+
+  /* ---------- Modules (signature element) ---------- */
+  .modules-panel{ grid-area:modules; }
+  .chip-row{ display:grid; grid-template-columns:repeat(4,1fr); gap:16px; margin-top:12px; }
+  @media (max-width:620px){ .chip-row{ grid-template-columns:repeat(2,1fr); } }
+  .chip{ position:relative; background:var(--bg-grid); border:1px solid var(--border);
+    border-radius:6px; padding:16px 10px 14px 10px; text-align:center; }
+  .chip::before, .chip::after{
+    content:""; position:absolute; left:14px; right:14px; height:6px;
+    background-image: repeating-linear-gradient(90deg, var(--text-faint) 0, var(--text-faint) 5px, transparent 5px, transparent 13px);
+    opacity:0.55;
+  }
+  .chip::before{ top:-6px; }
+  .chip::after{ bottom:-6px; }
+  .chip-glow{ position:absolute; inset:0; border-radius:6px; opacity:0.15; pointer-events:none; transition: background 0.3s ease, opacity 0.3s ease; }
+  .chip-id{ font-family:var(--mono); font-size:10.5px; color:var(--text-dim); letter-spacing:0.1em; }
+  .chip-temp{ font-family:var(--mono); font-weight:700; font-size:26px; margin-top:6px; position:relative; }
+  .chip-state{ font-size:10px; margin-top:5px; letter-spacing:0.06em; text-transform:uppercase; font-weight:600; position:relative; }
+
+  /* ---------- Energy ---------- */
+  .energy-panel{ grid-area:energy; }
+  .energy-top{ display:flex; align-items:flex-end; justify-content:space-between; flex-wrap:wrap; gap:14px; margin-bottom:6px; }
+  .energy-stats{ display:flex; gap:26px; }
+  .estat-label{ font-size:10.5px; color:var(--text-dim); letter-spacing:0.08em; text-transform:uppercase; }
+  .estat-value{ font-family:var(--mono); font-weight:700; font-size:22px; color:var(--energy); margin-top:3px; }
+  .estat-value.small{ color:var(--text); }
+  .spark-wrap{ margin-top:6px; }
+  .spark-wrap svg{ width:100%; height:70px; display:block; }
+
+  footer{ text-align:center; color:var(--text-faint); font-size:11px; padding:22px 6px 6px; letter-spacing:0.03em; }
+
+  @media (prefers-reduced-motion: reduce){
+    *{ animation:none !important; transition:none !important; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <div class="brand">
+      <div class="brand-mark">EV</div>
+      <div>
+        <h1>Vehicle Telemetry</h1>
+        <span class="sub">STM32 Module Cluster · Live Simulated Feed</span>
+      </div>
+    </div>
+    <div class="status-cluster">
+      <div class="status-pill"><span class="dot"></span> DATA LINK NOMINAL</div>
+      <div class="clock" id="clock">--:--:--</div>
+    </div>
+  </header>
+
+  <div class="dash">
+
+    <!-- SPEED -->
+    <section class="panel speed-panel" style="grid-area:speed;">
+      <svg class="gauge-svg" viewBox="0 0 300 190">
+        <path class="gauge-track" id="speedTrack" d=""></path>
+        <path class="gauge-fill" id="speedFill" d="" stroke-dasharray="0 1000" stroke-dashoffset="0"></path>
+        <g id="speedTicks"></g>
+        <line class="needle" id="speedNeedle" x1="150" y1="150" x2="150" y2="45"></line>
+        <circle class="needle-hub" cx="150" cy="150" r="6"></circle>
+      </svg>
+      <div class="speed-readout">
+        <div class="speed-value" id="speedValue">0</div>
+        <div class="speed-unit">km/h</div>
+      </div>
+    </section>
+
+    <!-- BATTERY -->
+    <section class="panel battery-panel" style="grid-area:battery;">
+      <div class="ring-wrap">
+        <svg viewBox="0 0 74 74">
+          <circle class="ring-track" cx="37" cy="37" r="30"></circle>
+          <circle class="ring-fill" id="battRing" cx="37" cy="37" r="30" stroke-dasharray="188.5" stroke-dashoffset="188.5"></circle>
+        </svg>
+        <div class="ring-pct" id="battPct">--%</div>
+      </div>
+      <div class="battery-meta">
+        <div>BATTERY LEVEL</div>
+      </div>
+    </section>
+
+    <!-- RANGE -->
+    <section class="panel range-panel" style="grid-area:range;">
+      <p class="panel-label">Est. Range<span class="unit">km</span></p>
+      <div class="range-value" id="rangeValue">--<span>km</span></div>
+    </section>
+
+    <!-- RPM -->
+    <section class="panel rpm-panel" style="grid-area:rpm;">
+      <p class="panel-label">Motor RPM</p>
+      <div class="bigstat" id="rpmValue">0</div>
+      <div class="bar-track"><div class="bar-fill" id="rpmBar" style="width:0%; background:var(--accent);"></div></div>
+      <div class="bar-ticks"><span>0</span><span>4000</span><span>8000</span></div>
+    </section>
+
+    <!-- MOTOR TEMP -->
+    <section class="panel mtemp-panel" style="grid-area:mtemp;">
+      <p class="panel-label">Motor Temp<span class="unit">°C</span></p>
+      <div class="bigstat" id="motorTempValue">--</div>
+      <div class="thermo-track"><div class="thermo-marker" id="motorTempMarker" style="left:0%;"></div></div>
+      <div class="bar-ticks"><span>20°</span><span>65°</span><span>110°</span></div>
+    </section>
+
+    <!-- ALERTS -->
+    <section class="panel alerts-panel" style="grid-area:alerts;">
+      <p class="panel-label">System Alerts</p>
+      <ul class="alerts-list" id="alertsList"></ul>
+    </section>
+
+    <!-- MODULES -->
+    <section class="panel modules-panel" style="grid-area:modules;">
+      <p class="panel-label">Module Temperatures — STM32 Board Cluster<span class="unit">°C</span></p>
+      <div class="chip-row" id="chipRow"></div>
+    </section>
+
+    <!-- ENERGY -->
+    <section class="panel energy-panel" style="grid-area:energy;">
+      <div class="energy-top">
+        <div class="energy-stats">
+          <div>
+            <div class="estat-label">Consumption Rate</div>
+            <div class="estat-value" id="energyRate">-- <span style="font-size:13px;">kW/hr</span></div>
+          </div>
+          <div>
+            <div class="estat-label">Session Total</div>
+            <div class="estat-value small" id="energyTotal">-- <span style="font-size:13px;">kWh</span></div>
+          </div>
+        </div>
+        <div class="estat-label">Last 60s draw</div>
+      </div>
+      <div class="spark-wrap">
+        <svg id="sparkSvg" viewBox="0 0 600 70" preserveAspectRatio="none"></svg>
+      </div>
+    </section>
+
+  </div>
+
+  <footer>Static prototype · all values are simulated · not connected to vehicle hardware</footer>
+</div>
+
+<script>
+(function(){
+  "use strict";
+
+  // ---------- helpers ----------
+  const clamp = (v,min,max)=>Math.max(min,Math.min(max,v));
+  const lerp = (a,b,t)=>a+(b-a)*t;
+  function randWalk(target,min,max,step){
+    let t = target + (Math.random()-0.5)*step;
+    return clamp(t,min,max);
+  }
+  function polarToCartesian(cx,cy,r,angleDeg){
+    const rad = (angleDeg-90) * Math.PI/180;
+    return { x: cx + r*Math.cos(rad), y: cy + r*Math.sin(rad) };
+  }
+  function describeArc(cx,cy,r,startAngle,endAngle){
+    const start = polarToCartesian(cx,cy,r,endAngle);
+    const end = polarToCartesian(cx,cy,r,startAngle);
+    const largeArc = (endAngle-startAngle) <= 180 ? "0":"1";
+    return ["M",start.x,start.y,"A",r,r,0,largeArc,0,end.x,end.y].join(" ");
+  }
+  function heatColor(t){ // t in 0..1
+    if(t<0.5) return lerpColor([79,195,247],[255,200,87], t/0.5);
+    return lerpColor([255,200,87],[255,85,104], (t-0.5)/0.5);
+  }
+  function lerpColor(a,b,t){
+    const c = a.map((v,i)=>Math.round(lerp(v,b[i],t)));
+    return `rgb(${c[0]},${c[1]},${c[2]})`;
+  }
+  function pad(n){ return n.toString().padStart(2,"0"); }
+
+  // ---------- gauge geometry (speed) ----------
+  const GSTART=-130, GEND=130, GCX=150, GCY=150, GR=110;
+  document.getElementById("speedTrack").setAttribute("d", describeArc(GCX,GCY,GR,GSTART,GEND));
+  document.getElementById("speedFill").setAttribute("d", describeArc(GCX,GCY,GR,GSTART,GEND));
+  const ARC_LEN = (2*Math.PI*GR) * ((GEND-GSTART)/360);
+  document.getElementById("speedFill").style.strokeDasharray = ARC_LEN.toFixed(1)+" 1000";
+
+  const SPEED_MAX = 160;
+  const ticksG = document.getElementById("speedTicks");
+  for(let v=0; v<=SPEED_MAX; v+=20){
+    const ang = GSTART + (v/SPEED_MAX)*(GEND-GSTART);
+    const p1 = polarToCartesian(GCX,GCY,GR-15,ang);
+    const p2 = polarToCartesian(GCX,GCY,GR-4,ang);
+    const line = document.createElementNS("http://www.w3.org/2000/svg","line");
+    line.setAttribute("x1",p1.x); line.setAttribute("y1",p1.y);
+    line.setAttribute("x2",p2.x); line.setAttribute("y2",p2.y);
+    line.setAttribute("class","gauge-tick");
+    ticksG.appendChild(line);
+  }
+
+  // ---------- module chip DOM ----------
+  const chipRow = document.getElementById("chipRow");
+  const chipEls = [];
+  for(let i=1;i<=4;i++){
+    const chip = document.createElement("div");
+    chip.className="chip";
+    chip.innerHTML = `
+      <div class="chip-glow"></div>
+      <div class="chip-id">MODULE ${i}</div>
+      <div class="chip-temp">--°</div>
+      <div class="chip-state">nominal</div>`;
+    chipRow.appendChild(chip);
+    chipEls.push(chip);
+  }
+
+  // ---------- alerts ----------
+  const alertsList = document.getElementById("alertsList");
+  const MAX_ALERTS = 8;
+  function pushAlert(msg, sev){
+    const li = document.createElement("li");
+    li.className = "alert-item sev-"+sev;
+    const now = new Date();
+    li.innerHTML = `<span class="alert-dot"></span>
+      <div class="alert-body">
+        <div class="alert-msg">${msg}</div>
+        <div class="alert-time">${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}</div>
+      </div>`;
+    alertsList.prepend(li);
+    while(alertsList.children.length > MAX_ALERTS){
+      alertsList.removeChild(alertsList.lastChild);
+    }
+  }
+  pushAlert("Telemetry link established", "info");
+  pushAlert("All four STM32 modules online", "info");
+
+  const infoPool = ["CAN bus frame rate nominal","GPS lock acquired","OTA check complete — up to date","Cell balancing cycle complete","Regen braking active"];
+  let lastInfoAt = 0;
+
+  // ---------- state ----------
+  let state = {
+    speed: 0, speedTarget: 40,
+    rpm: 0, rpmTarget: 2200,
+    motorTemp: 42, motorTempTarget: 46,
+    battery: 78,
+    moduleTemps: [34,36,33,35],
+    moduleTargets: [38,40,36,39],
+    energyRate: 6, energyRateTarget: 8,
+    energyTotal: 0,
+  };
+  let history = new Array(40).fill(6);
+  const warnedModule = [false,false,false,false];
+  let critMotorWarned = false;
+  let lowBattWarned = false;
+
+  function pickNewTargets(){
+    state.speedTarget = randWalk(state.speedTarget, 8, 128, 46);
+    state.rpmTarget = clamp(state.speedTarget*46 + (Math.random()-0.5)*400, 0, 7800);
+    state.motorTempTarget = randWalk(state.motorTempTarget, 38, 92, 6);
+    state.moduleTargets = state.moduleTargets.map(t=>randWalk(t, 30, 68, 5));
+    state.energyRateTarget = clamp(4 + state.speedTarget*0.14 + (Math.random()-0.5)*3, 1, 34);
+  }
+  pickNewTargets();
+  setInterval(pickNewTargets, 2200);
+
+  function tick(){
+    // smooth toward targets
+    state.speed = lerp(state.speed, state.speedTarget, 0.06);
+    state.rpm = lerp(state.rpm, state.rpmTarget, 0.08);
+    state.motorTemp = lerp(state.motorTemp, state.motorTempTarget, 0.03);
+    state.moduleTemps = state.moduleTemps.map((v,i)=>lerp(v, state.moduleTargets[i], 0.03));
+    state.energyRate = lerp(state.energyRate, state.energyRateTarget, 0.08);
+    state.battery = clamp(state.battery - 0.0035 - state.energyRate*0.00015, 2, 100);
+    state.energyTotal += state.energyRate/3600; // kWh accrued per ~1s tick
+
+    history.push(state.energyRate);
+    if(history.length>40) history.shift();
+
+    render();
+  }
+
+  function render(){
+    // speed gauge
+    const pctS = state.speed/SPEED_MAX;
+    document.getElementById("speedFill").style.strokeDashoffset = (ARC_LEN*(1-pctS)).toFixed(1);
+    const ang = GSTART + pctS*(GEND-GSTART);
+    document.getElementById("speedNeedle").style.transform = `rotate(${ang}deg)`;
+    document.getElementById("speedValue").textContent = Math.round(state.speed);
+
+    // rpm
+    document.getElementById("rpmValue").textContent = Math.round(state.rpm).toLocaleString();
+    document.getElementById("rpmBar").style.width = clamp(state.rpm/8000*100,0,100)+"%";
+
+    // motor temp
+    document.getElementById("motorTempValue").textContent = state.motorTemp.toFixed(1);
+    const mtPct = clamp((state.motorTemp-20)/(110-20),0,1);
+    document.getElementById("motorTempMarker").style.left = (mtPct*100)+"%";
+    if(state.motorTemp>92 && !critMotorWarned){ pushAlert("Motor over-temperature — reduce load","critical"); critMotorWarned=true; }
+    else if(state.motorTemp<80){ critMotorWarned=false; }
+
+    // battery ring
+    const battCirc = 188.5;
+    document.getElementById("battRing").style.strokeDashoffset = (battCirc*(1-state.battery/100)).toFixed(1);
+    document.getElementById("battRing").style.stroke = state.battery>40 ? "var(--accent)" : state.battery>15 ? "var(--warn)" : "var(--crit)";
+    document.getElementById("battPct").textContent = Math.round(state.battery)+"%";
+    if(state.battery<15 && !lowBattWarned){ pushAlert("Battery critically low — locate charging point","critical"); lowBattWarned=true; }
+    else if(state.battery<30 && !lowBattWarned){ pushAlert("Battery level below 30%","warning"); lowBattWarned=true; }
+    else if(state.battery>35){ lowBattWarned=false; }
+
+    // range: rough efficiency model, km per % battery, degraded slightly by higher energy rate
+    const kmPerPct = 3.35 - (state.energyRate/34)*0.9;
+    document.getElementById("rangeValue").innerHTML = Math.round(state.battery*kmPerPct)+"<span>km</span>";
+
+    // modules
+    state.moduleTemps.forEach((t,i)=>{
+      const el = chipEls[i];
+      const pct = clamp((t-25)/(75-25),0,1);
+      const col = heatColor(pct);
+      el.querySelector(".chip-temp").textContent = t.toFixed(1)+"°";
+      el.querySelector(".chip-temp").style.color = col;
+      const glow = el.querySelector(".chip-glow");
+      glow.style.background = `radial-gradient(circle at 50% 20%, ${col}, transparent 70%)`;
+      const stateLabel = el.querySelector(".chip-state");
+      if(t>65){
+        stateLabel.textContent="overheating"; stateLabel.style.color="var(--crit)";
+        if(!warnedModule[i]){ pushAlert(`Module ${i+1} temperature elevated (${t.toFixed(0)}°C)`,"warning"); warnedModule[i]=true; }
+      } else if(t>55){
+        stateLabel.textContent="elevated"; stateLabel.style.color="var(--warn)";
+        warnedModule[i]=false;
+      } else {
+        stateLabel.textContent="nominal"; stateLabel.style.color="var(--text-dim)";
+        warnedModule[i]=false;
+      }
+    });
+
+    // energy
+    document.getElementById("energyRate").innerHTML = state.energyRate.toFixed(1)+' <span style="font-size:13px;">kW/hr</span>';
+    document.getElementById("energyTotal").innerHTML = state.energyTotal.toFixed(2)+' <span style="font-size:13px;">kWh</span>';
+    renderSpark();
+
+    // occasional benign info log
+    const now = Date.now();
+    if(now - lastInfoAt > 9000 && Math.random()<0.35){
+      pushAlert(infoPool[Math.floor(Math.random()*infoPool.length)], "info");
+      lastInfoAt = now;
+    }
+  }
+
+  function renderSpark(){
+    const svg = document.getElementById("sparkSvg");
+    const w=600,h=70, max=36;
+    const pts = history.map((v,i)=>{
+      const x = (i/(history.length-1))*w;
+      const y = h - (clamp(v,0,max)/max)*h;
+      return [x,y];
+    });
+    const line = pts.map(p=>p.join(",")).join(" ");
+    const area = `0,${h} ` + line + ` ${w},${h}`;
+    svg.innerHTML = `
+      <defs>
+        <linearGradient id="sparkGrad" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stop-color="#ffc857" stop-opacity="0.45"/>
+          <stop offset="100%" stop-color="#ffc857" stop-opacity="0"/>
+        </linearGradient>
+      </defs>
+      <polygon points="${area}" fill="url(#sparkGrad)"></polygon>
+      <polyline points="${line}" fill="none" stroke="#ffc857" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></polyline>
+    `;
+  }
+
+  // ---------- clock ----------
+  function tickClock(){
+    const d = new Date();
+    document.getElementById("clock").textContent = `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+  }
+  tickClock();
+  setInterval(tickClock, 1000);
+
+  render();
+  setInterval(tick, 150);
+})();
+</script>
+</body>
+</html>
